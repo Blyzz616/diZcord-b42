@@ -1,0 +1,36 @@
+# diZcord 2 configuration — copy to dizcord.ini and edit.
+
+[server]
+# Display name used in Discord embeds
+name = My PZ Server
+# Zomboid user folder (contains server-console.txt and Logs/)
+zomboid_dir = ~/Zomboid
+# Optional explicit overrides:
+# console_log = /home/pz/Zomboid/server-console.txt
+# logs_dir = /home/pz/Zomboid/Logs
+
+[discord]
+webhook_url = https://discord.com/api/webhooks/XXXX/YYYY
+
+[dizcord]
+# Where session/playtime/death state is kept
+state_file = ~/.dizcord/state.json
+# Seconds between log polls
+poll_interval = 0.5
+# A reconnect within this many seconds of dying counts as a respawn
+respawn_window = 600
+
+# Override any parser regex here if your log format differs from the
+# built-in defaults. Defaults verified against B42.20 real logs:
+#   join/disconnect -> Logs/*_connections.txt
+#   death           -> Logs/*_user.txt
+#   server_up       -> server-console.txt
+# server_down and denied are still the B41 wording (unverified on B42).
+# Named groups are required where shown.
+[patterns]
+# join = event="fully-connected".*?ip="(?P<ip>[^"]*)".*?steam-id="(?P<steamid>\d+)".*?username="(?P<username>[^"]*)"
+# disconnect = event="disconnect".*?ip="(?P<ip>[^"]*)".*?steam-id="(?P<steamid>\d+)".*?username="(?P<username>[^"]*)"
+# death = user (?P<name>.+?) died at \((?P<x>\d+),(?P<y>\d+),(?P<z>\d+)\)
+# server_up = SERVER STARTED
+# server_down = command\s+entered\s+via\s+server\s+console\s+\(System\.in\):\s+"quit"
+# denied = Client sent invalid server password
