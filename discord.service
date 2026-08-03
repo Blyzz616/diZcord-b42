@@ -1,0 +1,15 @@
+[Unit]
+Description=diZcord 2 - Project Zomboid to Discord integration
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pzserver
+WorkingDirectory=/opt/dizcord
+ExecStart=/usr/bin/python3 /opt/dizcord/dizcord.py -c /opt/dizcord/dizcord.ini
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
