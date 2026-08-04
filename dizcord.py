@@ -25,6 +25,7 @@ IMPORTANT — parser status:
 
 import argparse
 import configparser
+import datetime
 import json
 import logging
 import random
@@ -33,8 +34,11 @@ import signal
 import sys
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from pathlib import Path
+
+__version__ = "2.1.0"
 
 log = logging.getLogger("dizcord")
 
@@ -132,6 +136,19 @@ RESPAWN_MESSAGES = [
 ]
 
 
+def last_played_str(epoch):
+    """'Today' / 'Yesterday' / '18 Sep 2026' from a unix timestamp."""
+    if not epoch:
+        return None
+    d = datetime.date.fromtimestamp(epoch)
+    today = datetime.date.today()
+    if d == today:
+        return "Today"
+    if d == today - datetime.timedelta(days=1):
+        return "Yesterday"
+    return d.strftime("%d %b %Y")
+
+
 def human_duration(secs: int) -> str:
     secs = max(0, int(secs))
     parts = []
@@ -190,6 +207,90 @@ class Discord:
                 log.error("Discord webhook failed (%s): %s", err.code, err.reason)
         except Exception as err:  # network blips must never kill the watcher
             log.error("Discord webhook error: %s", err)
+
+
+# --------------------------------------------------------------------------
+# Steam profile lookup (optional enrichment for join/leave embeds)
+# --------------------------------------------------------------------------
+class Steam:
+    """With [steam] api_key: persona name, avatar, PZ hours, other games
+    (Steam Web API — get a free key at https://steamcommunity.com/dev/apikey).
+    Without a key: persona name + avatar only, via the public profile XML.
+    Results are cached in the state file for cache_hours."""
+
+    PZ_APPID = 108600
+    API = "https://api.steampowered.com"
+
+    def __init__(self, cfg, state):
+        s = cfg.get("steam", {})
+        self.enabled = s.get("enabled", "true").strip().lower() != "false"
+        self.api_key = s.get("api_key", "").strip()
+        self.cache_secs = float(s.get("cache_hours", "24") or 24) * 3600
+        self.state = state
+
+    def profile(self, steamid: str) -> dict:
+        if not self.enabled or not steamid:
+            return {}
+        cache = self.state.data.setdefault("steam_cache", {})
+        hit = cache.get(steamid)
+        if hit and time.time() - hit.get("at", 0) < self.cache_secs:
+            return hit
+        info = {"at": time.time()}
+        try:
+            if self.api_key:
+                self._fill_from_api(steamid, info)
+            else:
+                self._fill_from_xml(steamid, info)
+        except Exception as err:   # enrichment must never break announcements
+            log.warning("Steam lookup failed for %s: %s", steamid, err)
+            if hit:                # keep serving stale data over nothing
+                return hit
+        cache[steamid] = info
+        self.state.save()
+        return info
+
+    def _fetch(self, url: str) -> bytes:
+        req = urllib.request.Request(
+            url, headers={"User-Agent": f"diZcord/{__version__}"})
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            return resp.read()
+
+    def _fill_from_api(self, steamid, info):
+        q = urllib.parse.urlencode({"key": self.api_key, "steamids": steamid})
+        data = json.loads(self._fetch(
+            f"{self.API}/ISteamUser/GetPlayerSummaries/v2/?{q}"))
+        players = data.get("response", {}).get("players", [])
+        if players:
+            info["persona"] = players[0].get("personaname")
+            info["avatar"] = players[0].get("avatarfull")
+
+        q = urllib.parse.urlencode({
+            "key": self.api_key, "steamid": steamid,
+            "include_appinfo": 1, "include_played_free_games": 1})
+        data = json.loads(self._fetch(
+            f"{self.API}/IPlayerService/GetOwnedGames/v1/?{q}"))
+        others = []
+        for g in data.get("response", {}).get("games", []):
+            if g.get("appid") == self.PZ_APPID:
+                info["pz_hours"] = g.get("playtime_forever", 0) // 60
+            elif g.get("playtime_forever", 0) >= 60:   # >= 1h played
+                others.append(g)
+        others.sort(key=lambda g: g.get("rtime_last_played", 0), reverse=True)
+        info["games"] = [{"name": g.get("name", "?"),
+                          "hours": g.get("playtime_forever", 0) // 60,
+                          "last": g.get("rtime_last_played")}
+                         for g in others[:2]]
+
+    def _fill_from_xml(self, steamid, info):
+        xml = self._fetch(
+            f"https://steamcommunity.com/profiles/{steamid}?xml=1"
+        ).decode("utf-8", "replace")
+        m = re.search(r"<steamID><!\[CDATA\[(.*?)\]\]></steamID>", xml, re.S)
+        if m:
+            info["persona"] = m.group(1)
+        m = re.search(r"<avatarFull><!\[CDATA\[(.*?)\]\]></avatarFull>", xml, re.S)
+        if m:
+            info["avatar"] = m.group(1)
 
 
 # --------------------------------------------------------------------------
@@ -304,6 +405,7 @@ class Watcher:
         self.discord = discord
         self.state = state
         self.patterns = {name: re.compile(rx) for name, rx in cfg["patterns"].items()}
+        self.steam = Steam(cfg, state)
         self.server_name = cfg["server"]["name"]
         self.respawn_window = int(cfg["dizcord"].get("respawn_window", "600"))
 
@@ -370,21 +472,41 @@ class Watcher:
         st["players"].setdefault(steamid, {})["login"] = username
         st["logins"][username] = steamid
 
+        sp = self.steam.profile(steamid)
+        persona = sp.get("persona") or username
+        avatar = sp.get("avatar")
+
         death_at = st["dead"].get(steamid)
         if death_at and now - death_at <= self.respawn_window:
             del st["dead"][steamid]
             self.state.save()
             self.discord.embed(
                 COLOURS["DARKVIOLET"], title="Respawn notice:",
-                description=random.choice(RESPAWN_MESSAGES).format(name=username))
+                description=random.choice(RESPAWN_MESSAGES).format(name=username),
+                thumbnail=avatar)
             return
         st["dead"].pop(steamid, None)
         self.state.save()
+
         profile = f"https://steamcommunity.com/profiles/{steamid}"
+        fields = []
+        if sp.get("pz_hours") is not None:
+            fields.append({"name": "Hours on Record:",
+                           "value": f"{sp['pz_hours']:,}", "inline": False})
+        if sp.get("games"):
+            fields.append({"name": f"{persona} has also played:",
+                           "value": "​", "inline": False})
+            for g in sp["games"]:
+                value = f"{g['hours']:,} hrs on record"
+                last = last_played_str(g.get("last"))
+                if last:
+                    value += f"\nLast played: {last}"
+                fields.append({"name": g["name"], "value": value, "inline": True})
         self.discord.embed(
             COLOURS["PURPLE"], title="New connection:",
-            description=(f"Steam Profile: [{username}]({profile})\n"
-                         f"Logging in as **{username}**"))
+            description=(f"Steam Profile: [{persona}]({profile})\n"
+                         f"Logging in as **{username}**"),
+            thumbnail=avatar, fields=fields or None)
 
     def on_disconnect(self, m, line):
         d = m.groupdict()
@@ -400,21 +522,27 @@ class Watcher:
             session = now - st["sessions"].pop(steamid)
             st["totals"][steamid] = st["totals"].get(steamid, 0) + session
 
+        avatar = st.get("steam_cache", {}).get(steamid, {}).get("avatar")
         lines = []
         if session is not None:
+            total = st["totals"][steamid]
             lines.append(f"{name} was online for {human_duration(session)}")
-            lines.append(f"Total time on server: {human_duration(st['totals'][steamid])}")
+            lines.append(f"Total time on server:\n{human_duration(total)}")
+            if total >= 3600:
+                lines.append(f"({int(total // 3600)} Hours)")
 
         if steamid in st["dead"]:
             del st["dead"][steamid]
             self.state.save()
             msg = random.choice(RAGE_MESSAGES).format(name=name)
             self.discord.embed(COLOURS["RED"], title=f"{name} rage-quit",
-                               description="\n".join([msg, ""] + lines))
+                               description="\n".join([msg, ""] + lines),
+                               thumbnail=avatar)
         else:
             self.state.save()
             self.discord.embed(COLOURS["RED"], title=f"{name} has disconnected",
-                               description="\n".join(lines) or None)
+                               description="\n".join(lines) or None,
+                               thumbnail=avatar)
 
     def on_death(self, m, line):
         name = m.groupdict().get("name", "?")
