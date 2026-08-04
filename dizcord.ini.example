@@ -12,6 +12,17 @@ zomboid_dir = ~/Zomboid
 [discord]
 webhook_url = https://discord.com/api/webhooks/XXXX/YYYY
 
+[steam]
+# Optional Steam profile enrichment for join/leave embeds.
+# With an api_key (free: https://steamcommunity.com/dev/apikey):
+#   real Steam name, avatar, PZ hours on record, two most recent other games.
+# Without a key: Steam name + avatar only (public profile XML).
+# Set enabled = false to disable all Steam lookups.
+enabled = true
+api_key =
+# How long to cache profile data per player (hours)
+cache_hours = 24
+
 [dizcord]
 # Where session/playtime/death state is kept
 state_file = ~/.dizcord/state.json
