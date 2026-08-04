@@ -8,6 +8,22 @@ Versioning: X.Y.Z — X breaking, Y feature, Z fix.
 - Server-shutdown (`server_down`) and wrong-password (`denied`) parsers
   still carry B41 patterns; awaiting real B42.20 captures to verify.
 
+## [2.1.0] - 2026-08-03
+
+### Added
+
+- Steam profile enrichment on join/leave embeds (new `[steam]` ini
+  section): real Steam persona name as the profile link text, avatar
+  thumbnail, PZ "Hours on Record", and the two most recently played
+  other games with hours and last-played date.
+  - With a free Steam Web API key: full data via the official API
+    (replaces B41's fragile profile-HTML scraping).
+  - Without a key: persona name + avatar via the public profile XML.
+  - Per-player caching (default 24 h) in the state file; lookups can
+    never block or break announcements.
+- Disconnect and rage-quit embeds now include the avatar thumbnail and a
+  "(N Hours)" lifetime total, matching the B41 layout.
+
 ## [2.0.0] - 2026-08-03
 
 First Build 42 release. Complete rewrite of the Build 41 bash toolkit
