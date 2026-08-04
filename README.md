@@ -14,7 +14,7 @@ Successor to [Blyzz616/diZcord](https://github.com/Blyzz616/diZcord)
 | Event | Source | Discord output |
 |---|---|---|
 | Server online | `server-console.txt` (`SERVER STARTED`) | "ONLINE" embed with startup duration |
-| Player join | `Logs/*_connections.txt` (`event="fully-connected"`) | Username + Steam profile link |
+| Player join | `Logs/*_connections.txt` (`event="fully-connected"`) | Steam name + profile link, avatar, PZ hours, recently played games |
 | Player disconnect | `Logs/*_connections.txt` (`event="disconnect"`) | Session time + lifetime playtime |
 | Death | `Logs/*_user.txt` (`user X died at (x,y,z)`) | Random obituary message |
 | Rage-quit | death followed by disconnect | Shaming message + playtimes |
@@ -107,6 +107,20 @@ zomboid_dir = ~/Zomboid
 [discord]
 webhook_url = https://discord.com/api/webhooks/XXXX/YYYY
 ```
+
+### Steam profile enrichment (optional but recommended)
+
+Join embeds can show the player's real Steam name, avatar, PZ hours on
+record and their recently played games. For the full set, get a free
+Steam Web API key at <https://steamcommunity.com/dev/apikey> and add it:
+
+```ini
+[steam]
+api_key = YOURKEYHERE
+```
+
+Without a key you still get the Steam name and avatar (public profiles
+only). Set `enabled = false` to turn all Steam lookups off.
 
 ## Updating
 
